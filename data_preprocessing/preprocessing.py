@@ -59,7 +59,7 @@ class Preprocessor:
             #Fixing Item_Fat_Content column
             data['Item_Fat_Content'].replace('low fat', 'Low Fat', inplace=True)
             data['Item_Fat_Content'].replace('LF', 'Low Fat', inplace=True)
-            data['Item_Fat_Content'].replace('reg', 'Low Fat', inplace=True)
+            data['Item_Fat_Content'].replace('reg', 'Regular', inplace=True)
 
             #Changing Item_Identifier values by FD, DR, NC
             data['Item_Identifier'] = data['Item_Identifier'].apply(lambda x: x[:2])
