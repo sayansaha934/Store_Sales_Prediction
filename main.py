@@ -60,9 +60,9 @@ def predict():
         return redirect(url_for('index'))
 
     except Exception as e:
+        print(e)
         flash('Something went wrong', 'danger')
         return redirect(url_for('index'))
-        # raise e
 
 
 @app.route("/predict-dataset", methods=['POST'])
@@ -81,12 +81,9 @@ def predict_dataset():
 
         pred_val = pred_validation(folderName)  # object initialization
         path=pred_val.prediction_validation()  # calling the prediction_validation function
-
-
         pred = predictFromModelBulk.prediction(path)  # object initialization
         # predicting for dataset present in database
         output_folder = pred.predictionFromModel()
-
         return send_file(output_folder, as_attachment=True)
 
     except Exception as e:
@@ -99,4 +96,4 @@ def predict_dataset():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=True)

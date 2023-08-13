@@ -5,8 +5,11 @@ import shutil
 from data_preprocessing import preprocessing
 from model_loading.load_model import Model_Loader
 from application_logging.logger import App_Logger
-
-
+from pyspark.ml.clustering import KMeans,KMeansModel
+from pyspark.ml.feature import VectorAssembler
+from pyspark.sql import SparkSession
+from model_path import PreprocessingModelPath
+from utils import concat_dataframe
 class prediction:
 
     def __init__(self, path):
@@ -19,45 +22,54 @@ class prediction:
             logging_collection = 'Prediction_Logs'
 
             self.logging.log(logging_db, logging_collection, 'INFO', 'Prediction Started!!')
+            spark = SparkSession.builder.appName("store_sales_prediction").getOrCreate()
+            data = spark.read.csv(self.path, header=True, inferSchema=True)
 
-
-            data = pd.read_csv(self.path)
-            item_outlet = data[['Item_Identifier', 'Outlet_Identifier']]
+            item_outlet = data.select('Item_Identifier', 'Outlet_Identifier')
 
             # Data Preprocessing
             self.logging.log(logging_db, logging_collection, 'INFO', 'Data Preprocessing started!!')
             preprocess = preprocessing.Preprocessor(logging_db, logging_collection)
             data = preprocess.dropUnnecessaryColumns(data)
             data = preprocess.editDataset(data)
-            data = preprocess.encodeCategoricalValues(data)
+            data = preprocess.indexCategoricalValues(data)
             data = preprocess.imputeMissingValues(data)
+            data = preprocess.encodeCategoricalValues(data)
             data = preprocess.scaleNumericalValues(data)
             self.logging.log(logging_db, logging_collection, 'INFO', 'Successful End of Data Preprocessing!!')
 
             # Clustering
-            kmeans = pickle.load(open('Clustering/cluster.pickle', 'rb'))
-            clusters = kmeans.predict(data)
-            data['Cluster'] = clusters
-            clusters = data['Cluster'].unique()
-            data = pd.concat([item_outlet, data], axis=1)
+            feature_cols = [col for col in data.columns if col != 'Item_Outlet_Sales']
+            vector_assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
+            data = vector_assembler.transform(data)
+            cluster_model = KMeansModel.load(PreprocessingModelPath.CLUSTER_MODEL.value)
+            data = cluster_model.transform(data)
+
+            data = data.withColumnRenamed('prediction', 'Cluster')
+            data = data.drop(*feature_cols)
+            clusters = sorted(data.select("Cluster").distinct().rdd.flatMap(lambda x: x).collect())
 
             # Prediction From Model
             self.logging.log(logging_db, logging_collection, 'INFO', 'Prediction from model started!!')
 
+            data = concat_dataframe(data, item_outlet)
             final_output = pd.DataFrame()
             for i in clusters:
-                cluster_data = data[data['Cluster'] == i]
+                cluster_data = data.filter(data['Cluster'] == i)
 
-                item_outlet = cluster_data[['Item_Identifier', 'Outlet_Identifier']]
-                item_outlet = item_outlet.reset_index(drop=True)
-                cluster_data = cluster_data.drop(columns=['Cluster', 'Item_Identifier', 'Outlet_Identifier'])
+                item_outlet = cluster_data.select('Item_Identifier', 'Outlet_Identifier')
+                # item_outlet = item_outlet.reset_index(drop=True)
+                cluster_data = cluster_data.drop(*['Cluster', 'Item_Identifier', 'Outlet_Identifier'])
 
                 loader = Model_Loader(logging_db, logging_collection)
                 model = loader.get_best_model(i)
-                output = model.predict(cluster_data)
-                output = pd.DataFrame(output, columns=['Item_Outlet_Sales'])
-                output = pd.concat([item_outlet, output], axis=1)
+                output = model.transform(cluster_data)
+                output = output.select('prediction')
+                output = output.withColumnRenamed('prediction', 'Item_Outlet_Sales')
+                output = concat_dataframe(item_outlet, output)
+                output = output.toPandas()
                 final_output = pd.concat([final_output, output], axis=0, ignore_index=True)
+            spark.stop()
 
             self.logging.log(logging_db, logging_collection, 'INFO', 'Successful End of Prediction from Model!!')
 
@@ -83,6 +95,8 @@ class prediction:
             self.logging.log(logging_db, logging_collection, 'INFO', 'Successful End of Preparation of folder to send!!')
             self.logging.log(logging_db, logging_collection, 'INFO', 'Successful End of Prediction')
 
+            spark.stop()
             return output_folder + '.zip'
         except Exception as e:
+            spark.stop()
             raise e

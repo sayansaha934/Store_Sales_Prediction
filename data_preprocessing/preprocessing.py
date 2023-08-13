@@ -4,6 +4,15 @@ from sklearn.impute import KNNImputer
 import numpy as np
 from application_logging.logger import App_Logger
 
+from utils import modify_columns, concat_dataframe
+from pyspark.sql import functions as F
+from pyspark.sql.types import IntegerType
+from pyspark.ml import PipelineModel
+from pyspark.ml.feature import  OneHotEncoderModel
+from pyspark.ml.feature import StandardScaler, StandardScalerModel
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.feature import Imputer, ImputerModel
+from model_path import PreprocessingModelPath
 class Preprocessor:
     '''
     This class will be used to preprocess the data before prediction
@@ -29,7 +38,7 @@ class Preprocessor:
                 '''
         try:
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to drop  Unnecessary Columns')
-            data = data.drop(columns=['Item_Type'])
+            data = data.drop('Item_Type')
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Dropped Unnecessary Columns Successfully!!')
             return data
 
@@ -54,22 +63,29 @@ class Preprocessor:
         try:
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to edit dataset')
 
-            data['Item_Visibility'].replace(0, np.nan, inplace=True) # Replacing 0 Item_Visibility by nan
+            ### Editing dataset
+            data = data.withColumn('Item_Visibility', F.when(data['Item_Visibility'] == 0, None).otherwise(data['Item_Visibility']))
 
-            #Fixing Item_Fat_Content column
-            data['Item_Fat_Content'].replace('low fat', 'Low Fat', inplace=True)
-            data['Item_Fat_Content'].replace('LF', 'Low Fat', inplace=True)
-            data['Item_Fat_Content'].replace('reg', 'Regular', inplace=True)
+            data = data.withColumn('Item_Fat_Content', F.when(
+                (data['Item_Fat_Content'] == 'low fat') | (data['Item_Fat_Content'] == 'LF'), 'Low Fat'
+            ).otherwise(F.when(data['Item_Fat_Content'] == 'reg', 'Regular').otherwise(data['Item_Fat_Content'])))
 
-            #Changing Item_Identifier values by FD, DR, NC
-            data['Item_Identifier'] = data['Item_Identifier'].apply(lambda x: x[:2])
+            # Apply lambda function on 'Item_Identifier'
+            item_identifier_udf = F.udf(lambda x: x[:2], F.StringType())
+            data = data.withColumn('Item_Identifier', item_identifier_udf(data['Item_Identifier']))
 
-            #Extracting the age of the outlets
-            data['Outlet_Age'] = 2013 - data['Outlet_Establishment_Year']
-            data = data.drop(columns=['Outlet_Establishment_Year'])
+            # Calculate Outlet_Age and drop Outlet_Establishment_Year
+            data = data.withColumn('Outlet_Age', (F.lit(2013) - data['Outlet_Establishment_Year']).cast(IntegerType()))
+            data = data.drop('Outlet_Establishment_Year')
 
-            #Chaning the Item_Fat_Content values having Item_Identifier = 'NC', by 'Non Edible'
-            data.loc[data['Item_Identifier'] == "NC", 'Item_Fat_Content'] = 'Non Edible'
+            # Update 'Item_Fat_Content' for Item_Identifier=="NC"
+            data = data.withColumn('Item_Fat_Content', F.when(data['Item_Identifier'] == "NC", 'Non Edible').otherwise(data['Item_Fat_Content']))
+            
+            #update  Outlet_Size
+            data = data.withColumn('Outlet_Size', F.when(data['Outlet_Size'] == 'Small', 0)
+                .when(data['Outlet_Size'] == 'Medium', 1)
+                .when(data['Outlet_Size'] == 'High', 2)
+                .otherwise(None))
 
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Dataset edited Successfully!!')
             return data
@@ -79,6 +95,39 @@ class Preprocessor:
             raise e
 
 
+    def indexCategoricalValues(self, data):
+        '''
+                            Method Name: encodeCategoricalValuesClassification
+                            Description: It encodes categorical values
+                            Output: A Dataframe with encoded categorical values
+                            On Failure: Raise Exception
+
+                            Written by: Sayan Saha
+                            Version: 1.0
+                            Revision: None
+                        '''
+
+        try:
+            self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to encode Categorical Values')
+
+            all_columns=data.columns
+            # Identify the categorical and numeric columns
+            categorical_cols = ['Item_Identifier', 'Item_Fat_Content', 'Outlet_Identifier', 'Outlet_Type', 'Outlet_Location_Type']
+
+            ### Index the categorical columns
+            indexer_model = PipelineModel.load(PreprocessingModelPath.INDEXER_MODEL.value)
+            data = indexer_model.transform(data)
+            data = modify_columns(data, categorical_cols, '_index')
+
+            self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Encoded Categorical Values Successfully!!')
+
+            return data
+
+        except Exception as e:
+            self.logging.log(self.logging_db, self.logging_collection, 'ERROR', f"Error occured to encode Categorical Values: {e}")
+
+            raise e
+    
     def encodeCategoricalValues(self, data):
         '''
                             Method Name: encodeCategoricalValuesClassification
@@ -93,15 +142,12 @@ class Preprocessor:
 
         try:
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to encode Categorical Values')
-            data['Outlet_Size'] = data['Outlet_Size'].map({'Small': 0, 'Medium': 1, 'High': 2})
+            categorical_cols = ['Item_Identifier', 'Item_Fat_Content', 'Outlet_Identifier', 'Outlet_Type', 'Outlet_Location_Type']
+            encoder_model = OneHotEncoderModel.load(PreprocessingModelPath.ENCODER_MODEL.value)
+            data = encoder_model.transform(data)
+            data = modify_columns(data, categorical_cols, '_encoded')
 
-            onehot_col = ['Item_Identifier', 'Item_Fat_Content', 'Outlet_Identifier', 'Outlet_Type',
-                          'Outlet_Location_Type']
-            onehot_enc = pickle.load(open('Encoding/encoder.pickle', 'rb'))
-            enc_array = onehot_enc.transform(data[onehot_col])
-            enc_df = pd.DataFrame(enc_array, columns=onehot_enc.get_feature_names_out())
-            data = data.drop(columns=onehot_col)
-            data = pd.concat([data, enc_df], axis=1)
+
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Encoded Categorical Values Successfully!!')
 
             return data
@@ -110,6 +156,7 @@ class Preprocessor:
             self.logging.log(self.logging_db, self.logging_collection, 'ERROR', f"Error occured to encode Categorical Values: {e}")
 
             raise e
+
 
 
 
@@ -128,10 +175,12 @@ class Preprocessor:
         try:
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to impute Missing Values')
 
-            imputer = KNNImputer(n_neighbors=3, weights='uniform', missing_values=np.nan)
-            new_array = imputer.fit_transform(data)  # impute the missing values
-            data = pd.DataFrame(data=new_array, columns=data.columns)
-            data['Outlet_Size'] = np.round(data['Outlet_Size'])
+            imputed_cols = data.columns
+            imputer_model = ImputerModel.load(PreprocessingModelPath.IMPUTER_MODEL.value)
+            data = imputer_model.transform(data)
+            data = modify_columns(data, imputed_cols, '_imputed')
+
+            # data['Outlet_Size'] = np.round(data['Outlet_Size'])
 
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Imputed Missing Values Successfully!!')
             return data
@@ -158,14 +207,15 @@ class Preprocessor:
         try:
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to encode Numerical Values')
 
-            num_cols = ['Item_Weight', 'Item_Visibility', 'Item_MRP', 'Outlet_Age']
-            num_df = data[num_cols]
-            cat_df = data.drop(columns=num_cols)
-            scaler = pickle.load(open('Scaling/scaler.pickle', 'rb'))
-            num_array = scaler.transform(num_df)
-            num_df = pd.DataFrame(num_array, columns=num_df.columns)
-            data = pd.concat([num_df, cat_df], axis=1)
+            scaling_cols=['Item_Weight', 'Item_Visibility', 'Item_MRP', 'Outlet_Age']
+            assembler = VectorAssembler(inputCols=scaling_cols, outputCol="features")
+            data = assembler.transform(data)
+            data = data.drop(*scaling_cols)
+            scaler_model = StandardScalerModel.load(PreprocessingModelPath.SCALER_MODEL.value)
 
+            # Transform the numerical columns using the scaler
+            data = scaler_model.transform(data)
+            data = data.drop('features')
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Scaled Numerical Values Successfully!!')
             return data
 

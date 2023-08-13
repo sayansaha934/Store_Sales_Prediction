@@ -26,11 +26,14 @@ pytz
 scikit-learn
 scipy
 six
-sklearn
 threadpoolctl
 tomli
 typing_extensions
 Werkzeug
 wincertstore
-xgboost==0.90
+xgboost
 zipp
+pypandoc
+findspark
+pyspark
+PyArrow

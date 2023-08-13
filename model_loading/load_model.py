@@ -1,7 +1,9 @@
 import os
 import pickle
 from application_logging.logger import App_Logger
-
+from pyspark.ml import Pipeline, PipelineModel
+from model_path import PredictionModelPath
+from pyspark.ml.regression import RandomForestRegressor, RandomForestRegressionModel
 
 class Model_Loader:
     '''
@@ -27,10 +29,11 @@ class Model_Loader:
         try:
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Started to find best model')
 
-            for file in os.listdir('Models'):
+            for file in os.listdir(PredictionModelPath.PATH.value):
                 modelName=file.split('.')[0]
                 if modelName.endswith(str(cluster)):
-                    model=pickle.load(open(f'Models/{file}', 'rb'))
+                    model=PipelineModel.load(f'{PredictionModelPath.PATH.value}/{file}')
+                    # model=RandomForestRegressionModel.load(f'{PredictionModelPath.PATH.value}/{file}')
                     break
             self.logging.log(self.logging_db, self.logging_collection, 'INFO', 'Got best model and returned the best model successfully!!')
 
