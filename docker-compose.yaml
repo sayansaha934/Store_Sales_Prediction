@@ -1,0 +1,21 @@
+version: '3'
+services:
+  pyspark-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pyspark_sales_prediction
+    ports:
+      - 5000:5000
+    volumes:
+      - ./:/app
+
+  jupyter:
+    image: jupyter/pyspark-notebook
+    container_name: pyspark_jupyer_notebook
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./:/home/jovyan/work
+    environment:
+      SPARK_HOME: /usr/local/spark
