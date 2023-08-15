@@ -12,8 +12,10 @@ from model_path import PreprocessingModelPath
 from utils import concat_dataframe
 class prediction:
 
-    def __init__(self, path):
+    def __init__(self, path=None, streaming=False, spark_df=None):
         self.path = path
+        self.streaming = streaming
+        self.spark_df = spark_df
         self.logging = App_Logger()
 
     def predictionFromModel(self):
@@ -23,7 +25,11 @@ class prediction:
 
             self.logging.log(logging_db, logging_collection, 'INFO', 'Prediction Started!!')
             spark = SparkSession.builder.appName("store_sales_prediction").getOrCreate()
-            data = spark.read.csv(self.path, header=True, inferSchema=True)
+
+            if self.streaming and self.spark_df:
+                data = self.spark_df
+            else:
+                data = spark.read.csv(self.path, header=True, inferSchema=True)
 
             item_outlet = data.select('Item_Identifier', 'Outlet_Identifier')
 
@@ -32,6 +38,7 @@ class prediction:
             preprocess = preprocessing.Preprocessor(logging_db, logging_collection)
             data = preprocess.dropUnnecessaryColumns(data)
             data = preprocess.editDataset(data)
+            
             data = preprocess.indexCategoricalValues(data)
             data = preprocess.imputeMissingValues(data)
             data = preprocess.encodeCategoricalValues(data)
@@ -84,13 +91,18 @@ class prediction:
                 os.mkdir(prediction_path)
 
             final_output.to_csv(prediction_path + "/" + "Sales_Prediction.csv", header=True, index=None)
+            print(final_output)
 
-            shutil.move('PredictionArchivedBadData', output_folder)
+            if os.path.isdir("PredictionArchivedBadData"):
+                shutil.move('PredictionArchivedBadData', output_folder)
 
             shutil.make_archive(output_folder, 'zip', output_folder)
             shutil.rmtree(output_folder)
-            os.remove(self.path)
-            shutil.rmtree('Prediction_Batch_Files')
+            if self.path:
+                os.remove(self.path)
+
+            if os.path.isdir("Prediction_Batch_Files"):
+                shutil.rmtree('Prediction_Batch_Files')
 
             self.logging.log(logging_db, logging_collection, 'INFO', 'Successful End of Preparation of folder to send!!')
             self.logging.log(logging_db, logging_collection, 'INFO', 'Successful End of Prediction')

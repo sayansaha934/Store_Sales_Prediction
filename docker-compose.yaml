@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: pyspark_sales_prediction
+    container_name: pyspark_app
     ports:
       - 5000:5000
     volumes:
@@ -12,10 +12,32 @@ services:
 
   jupyter:
     image: jupyter/pyspark-notebook
-    container_name: pyspark_jupyer_notebook
+    container_name: pyspark_jupyter_notebook
     ports:
       - "8888:8888"
     volumes:
       - ./:/home/jovyan/work
     environment:
       SPARK_HOME: /usr/local/spark
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 # For single-node setup
+    depends_on:
+      - zookeeper
+

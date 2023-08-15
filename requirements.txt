@@ -37,3 +37,4 @@ pypandoc
 findspark
 pyspark
 PyArrow
+kafka-python

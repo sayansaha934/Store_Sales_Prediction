@@ -4,12 +4,12 @@ import pandas as pd
 from os import listdir
 import shutil
 from application_logging.logger import App_Logger
+from env import MONGO_DB_URL
 
 class mongodbOperation:
 
     def __init__(self, logging_db):
-        self.client = pymongo.MongoClient(
-            "mongodb+srv://Sales:Sales@store-sales.gmwm3.mongodb.net/?retryWrites=true&w=majority")
+        self.client = pymongo.MongoClient(MONGO_DB_URL)
         self.logging_db=logging_db
         self.logging=App_Logger()
 
